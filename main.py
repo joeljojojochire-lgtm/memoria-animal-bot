@@ -4,8 +4,8 @@ from telebot.async_telebot import AsyncTeleBot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import BOT_TOKEN
 from db.database import init_db, create_user
-from core.matchmaking import add_to_queue, force_start_queue  # ← Importamos la función de forzado
-from core.game_manager import start_game_session  # ← Importamos el orquestador temporal
+from core.matchmaking import add_to_queue, force_start_queue  # ← Importamos las funciones adaptadas por grupo
+from core.game_manager import start_game_session  
 from handlers.callbacks import handle_animal_callback
 
 logging.basicConfig(
@@ -45,10 +45,12 @@ async def command_join(message):
     chat_group_id = message.chat.id  # Capturar el ID del grupo emisor
 
     await create_user(user_id, username)
-    result = await add_to_queue(user_id, username)
+    
+    # 🔧 CORRECCIÓN: Ahora pasamos el chat_group_id para mantener colas independientes
+    result = await add_to_queue(user_id, username, chat_group_id)
     
     if result["status"] == "already_in_queue":
-        await bot.reply_to(message, f"⚠️ Ya estás en la cola de espera, @{username}.")
+        await bot.reply_to(message, f"⚠️ Ya estás en la cola de espera de este grupo, @{username}.")
         return
 
     # Generamos el enlace directo dinámico hacia el DM del propio bot
@@ -70,7 +72,7 @@ async def command_join(message):
         room = result["room"]
         await bot.send_message(
             chat_group_id,
-            f"🔥 <b>¡SALA COMPLETADA! (5/5)</b>\nIniciando la sesión de juego automáticamente...\n\n"
+            f"🔥 <b>¡SALA COMPLETADA! ({room['players_count']}/5)</b>\nIniciando la sesión de juego automáticamente...\n\n"
             f"👉 ¡Vayan todos corriendo a sus DMs!",
             reply_markup=markup
         )
@@ -91,13 +93,13 @@ async def command_go(message):
 
     chat_group_id = message.chat.id
 
-    # Forzamos la inicialización de la cola acumulada actual
-    result = await force_start_queue()
+    # 🔧 CORRECCIÓN: Forzamos la cola pasando el chat_group_id de este grupo específico
+    result = await force_start_queue(chat_group_id)
 
     if result["status"] == "not_enough_players":
         await bot.reply_to(
             message, 
-            f"⚠️ No hay suficientes jugadores para forzar el inicio.\n"
+            f"⚠️ No hay suficientes jugadores en este grupo para forzar el inicio.\n"
             f"Se necesita un mínimo de <b>2 personas</b> (actualmente hay {result['current_count']})."
         )
         return
@@ -111,7 +113,7 @@ async def command_go(message):
 
         await bot.send_message(
             chat_group_id,
-            f"⚡ <b>¡Partida iniciada con /go!</b>\nCreando sala con los jugadores en espera.\n\n"
+            f"⚡ <b>¡Partida iniciada con /go!</b>\nCreando sala con los jugadores en espera de este grupo.\n\n"
             f"👉 Corran a sus DMs para empezar a memorizar.",
             reply_markup=markup
         )
@@ -136,7 +138,7 @@ async def capturar_id_imagen(message):
     mensaje_respuesta = (
         "🖼️ <b>¡Imagen recibida!</b>\n\n"
         "Aquí tienes el ID de Telegram para usar en tu código:\n"
-        f"<code>{file_id}</code>"
+        "<code>{file_id}</code>"
     )
     await bot.reply_to(message, mensaje_respuesta, parse_mode="HTML")
 
@@ -151,6 +153,26 @@ async def main():
     gm.scheduler = AsyncIOScheduler()
     gm.scheduler.start()
     logger.info("Planificador APScheduler iniciado con éxito.")
+    
+    # 🌍 TRUCO CRÍTICO PARA RENDER GRATIS: Servidor web falso en segundo plano
+    import os
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import threading
+
+    class FakeWebhookServer(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"Bot activo y operando de forma gratuita!")
+            
+        def log_message(self, format, *args):
+            return  # Silenciar logs internos del servidor HTTP para mantener la consola limpia
+
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), FakeWebhookServer)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    logger.info(f"🌍 Servidor web falso escuchando en el puerto {port} para satisfacer el escaneo de Render.")
     
     logger.info("Iniciando bucle de escucha asíncrono del bot...")
     await bot.infinity_polling(skip_pending=True)
