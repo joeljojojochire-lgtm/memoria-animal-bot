@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import random
+from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import aiosqlite
 
@@ -14,16 +15,13 @@ logger = logging.getLogger(__name__)
 scheduler = None
 
 async def start_game_session(bot, room_id: str, chat_group_id: int):
-    # Espera corta de cortesía para el lobby
     await asyncio.sleep(3) 
 
     players = []
     async with aiosqlite.connect(DB_PATH) as db:
-        # 🔧 CORRECCIÓN: Usamos 'status' en lugar de 'state' para que coincida con tu DB
         await db.execute("UPDATE rooms SET status = 'playing' WHERE room_id = ?", (room_id,))
         await db.commit()
         
-        # Obtenemos los jugadores reales de la tabla secundaria que tú creaste
         async with db.execute("SELECT user_id, username FROM room_players WHERE room_id = ?", (room_id,)) as cursor:
             async for row in cursor:
                 players.append({"user_id": row[0], "username": row[1]})
@@ -69,7 +67,6 @@ async def send_visual_sequence_dm(bot, user_id: int, room_id: str, level: int, s
         await asyncio.sleep(1)
         await bot.delete_message(user_id, init_msg.message_id)
 
-        # 🖼️ Envío de imágenes con respaldo de emoji en el texto
         for idx, animal in enumerate(sequence):
             emoji_respaldo = EMOJIS.get(animal, "❓")
             photo_msg = await bot.send_photo(
@@ -92,8 +89,16 @@ async def send_visual_sequence_dm(bot, user_id: int, room_id: str, level: int, s
         await bot.send_message(user_id, f"🧠 <b>NIVEL {level}</b>\n¿Cuál era el patrón?", reply_markup=markup)
 
         duration = get_level_duration(level) + len(sequence)
+        momento_ejecucion = datetime.now() + timedelta(seconds=duration)
         job_id = f"timeout_{room_id}_{user_id}_{level}"
-        scheduler.add_job(process_timeout_elimination, 'date', run_date=None, args=[bot, user_id, room_id, job_id], id=job_id, seconds=duration)
+        
+        scheduler.add_job(
+            process_timeout_elimination, 
+            'date', 
+            run_date=momento_ejecucion, 
+            args=[bot, user_id, room_id, job_id], 
+            id=job_id
+        )
         
     except Exception as e:
         logger.error(f"Error enviando secuencia al DM del usuario {user_id}: {e}")
@@ -145,7 +150,6 @@ async def check_room_transitions(bot, room_id: str, chat_group_id: int, current_
     else:
         await bot.send_message(chat_group_id, f"🔄 Siguiente nivel en 5 seg...")
         await asyncio.sleep(5)
-        # 🔧 CORRECCIÓN: Actualizamos el nivel actual en la tabla 'rooms' usando su columna real 'current_level'
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("UPDATE rooms SET current_level = ? WHERE room_id = ?", (current_level + 1, room_id))
             await db.commit()
