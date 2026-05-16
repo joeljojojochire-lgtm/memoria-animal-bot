@@ -1,67 +1,35 @@
-async def send_visual_sequence_dm(bot, user_id: int, room_id: str, level: int, sequence: list, chat_group_id: int):
+async def start_game_session(bot, room_id: str, chat_group_id: int):
+    """
+    Orquestador definitivo adaptado a tu main.py.
+    Obtiene los jugadores de la base de datos de forma segura e inicia la partida.
+    """
     try:
-        # ⏱️ Preparación rápida original (1 segundo por número)
-        init_msg = await bot.send_message(user_id, f"🚀 <b>NIVEL {level}</b>\nPrepárate para memorizar...")
-        for i in range(5, 0, -1):
-            await asyncio.sleep(1.0)
-            try: 
-                await bot.edit_message_text(f"🚀 Apareciendo en: <b>{i}</b>...", chat_id=user_id, message_id=init_msg.message_id)
-            except Exception:
-                pass
-        await asyncio.sleep(0.5)
-        await bot.delete_message(user_id, init_msg.message_id)
-
-        # --- 🖼️ ENVÍO DE IMÁGENES CON EMOJI DE RESPALDO (MALA CONEXIÓN) ---
-        for idx, animal in enumerate(sequence):
-            # 🔍 Buscamos el emoji en tu diccionario EMOJIS (si no existe, ponemos una huella 🐾)
-            animal_emoji = EMOJIS.get(animal, "🐾")
-            
-            photo_msg = await bot.send_photo(
-                user_id, 
-                photo=random.choice(ASSETS[animal]), 
-                # El texto que salva la partida si la imagen no carga por mal internet
-                caption=f"🖼️ Imagen {idx+1}/{len(sequence)}\n\n"
-                        f"👉 <b>{animal_emoji} {animal}</b>"
-            )
-            
-            # ⚡ Tiempos rápidos originales intactos para no ralentizar el juego
-            if idx == 0:
-                exposure = 5.0  # 5 segundos completos para la primera foto
-            else:
-                exposure = 3.5  # 3.5 segundos para las siguientes
-                
-            await asyncio.sleep(exposure)
-            await bot.delete_message(user_id, photo_msg.message_id)
-            await asyncio.sleep(0.1) # Micro-pausa técnica de red rápida
-
-        # Lógica de teclado
-        layout = build_keyboard_layout(level)
-        state_key = get_state_key(room_id, user_id)
-        PLAYER_STATES[state_key] = {"clicks": 0, "history": [], "sequence": sequence, "layout": layout, "level": level, "chat_group_id": chat_group_id}
-
-        markup = InlineKeyboardMarkup(row_width=4)
-        markup.add(*[InlineKeyboardButton(text=EMOJIS.get(n, n), callback_data=f"game_{room_id}_{n}_{level}_0") for n in layout])
+        # 1. En la primera ronda siempre iniciamos en el Nivel 1
+        level = 1
         
-        await bot.send_message(user_id, f"🧠 <b>NIVEL {level}</b>\n¿Cuál era el patrón?", reply_markup=markup)
+        # 2. Obtenemos los IDs de los jugadores vinculados a esta sala desde la DB
+        import aiosqlite
+        players = []
+        async with aiosqlite.connect("database.db") as db: # Asegúrate de que use el nombre correcto de tu DB
+            async with db.execute("SELECT user_id FROM room_players WHERE room_id = ?", (room_id,)) as cursor:
+                async for row in cursor:
+                    players.append(row[0])
 
-        # Calculamos la cantidad de imágenes para este nivel específico
-        if level <= 3:
-            num_items = 3
-        else:
-            num_items = 3 + (level - 3)
+        if not players:
+            logger.error(f"❌ No se encontraron jugadores para la sala {room_id}")
+            return
+
+        # 3. Generamos una secuencia inicial con 3 animales aleatorios para el Nivel 1
+        import random
+        from services.asset_service import ASSETS
+        lista_animales = list(ASSETS.keys())
+        sequence = [random.choice(lista_animales) for _ in range(3)]
+        
+        logger.info(f"🎮 Iniciando juego en sala {room_id}. Enviando DMs a {len(players)} jugadores.")
+
+        # 4. Le enviamos la secuencia visual con emojis a cada jugador participante
+        for player_id in players:
+            await send_visual_sequence_dm(bot, int(player_id), room_id, level, sequence, chat_group_id)
             
-        # Timeout dinámico basado en la cantidad de imágenes
-        duration = get_level_duration(level) + num_items
-        
-        # 🔧 CORRECCIÓN CRÍTICA: Cambiado 'date' por 'interval' para aceptar los segundos sin reventar
-        job_id = f"timeout_{room_id}_{user_id}_{level}"
-        scheduler.add_job(
-            process_timeout_elimination, 
-            'interval', 
-            seconds=duration, 
-            args=[bot, user_id, room_id, 0, job_id], 
-            id=job_id
-        )
-        
     except Exception as e:
-        logger.error(f"Error DM {user_id}: {e}")
+        logger.error(f"Error al iniciar sesión de juego en sala {room_id}: {e}")
