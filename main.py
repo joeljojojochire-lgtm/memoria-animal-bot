@@ -1,10 +1,9 @@
 import asyncio
 import logging
 from telebot.async_telebot import AsyncTeleBot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import BOT_TOKEN
 from db.database import init_db, create_user
-from core.matchmaking import add_to_queue, force_start_queue  # ← Importamos las funciones adaptadas por grupo
+from core.matchmaking import add_to_queue
 from core.game_manager import start_game_session  
 from handlers.callbacks import handle_animal_callback
 
@@ -24,101 +23,25 @@ async def command_start(message):
     await create_user(user_id, username)
     await bot.reply_to(
         message, 
-        "🧠 <b>¡Bienvenido a Memoria Animal!</b>\n\n"
-        "👥 Este juego está diseñado para jugarse en grupos.\n"
-        "Añádeme a un grupo de Telegram y envía <b>/join</b> allí para empezar a competir."
+        "🧠 <b>¡Bienvenido a Memoria Animal!</b>\nEnvía /join para buscar una partida en tiempo real."
     )
 
 @bot.message_handler(commands=['join'])
 async def command_join(message):
-    # 🚫 RESTRICCIÓN: Impedir que se unan desde chats privados
-    if message.chat.type not in ['group', 'supergroup']:
-        await bot.reply_to(
-            message, 
-            "❌ <b>¡Acceso denegado!</b> Este comando solo funciona dentro de grupos.\n"
-            "Por favor, agrégame a un grupo para jugar con tus amigos."
-        )
-        return
-
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.first_name
-    chat_group_id = message.chat.id  # Capturar el ID del grupo emisor
-
-    await create_user(user_id, username)
+    chat_group_id = message.chat.id  
     
-    # 🔧 CORRECCIÓN: Ahora pasamos el chat_group_id para mantener colas independientes
-    result = await add_to_queue(user_id, username, chat_group_id)
+    await create_user(user_id, username)
+    result = await add_to_queue(user_id, username)
     
     if result["status"] == "already_in_queue":
-        await bot.reply_to(message, f"⚠️ Ya estás en la cola de espera de este grupo, @{username}.")
-        return
-
-    # Generamos el enlace directo dinámico hacia el DM del propio bot
-    bot_info = await bot.get_me()
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton(text="📥 Ir a mis DMs", url=f"t.me/{bot_info.username}"))
-
-    if result["status"] == "queued":
-        await bot.send_message(
-            chat_group_id,
-            f"✅ @{username} se ha unido a la partida.\n"
-            f"⏳ Buscando rivales... [<b>{result['current_count']}/5</b>]\n\n"
-            f"<i>💡 Si no quieren esperar a los 5, alguien puede enviar <b>/go</b> (Mínimo 2).</i>\n"
-            f"👇 ¡Asegúrate de iniciar el chat privado del bot abajo!",
-            reply_markup=markup
-        )
-        
+        await bot.reply_to(message, f"⚠️ Ya estás en la cola de espera, @{username}. (Buscando: {result['current_count']}/2)")
+    elif result["status"] == "queued":
+        await bot.reply_to(message, f"⏳ Buscando rivales... [{result['current_count']}/2]\n¡Te avisaré cuando empiece la acción!")
     elif result["status"] == "room_created":
         room = result["room"]
-        await bot.send_message(
-            chat_group_id,
-            f"🔥 <b>¡SALA COMPLETADA! ({room['players_count']}/5)</b>\nIniciando la sesión de juego automáticamente...\n\n"
-            f"👉 ¡Vayan todos corriendo a sus DMs!",
-            reply_markup=markup
-        )
         
-        # Disparar de inmediato la sesión del juego en segundo plano sin congelar el bot
-        asyncio.create_task(
-            start_game_session(bot, room["room_id"], chat_group_id)
-        )
-
-# =========================================================
-# NUEVO COMANDO /GO: FORZAR INICIO DE PARTIDA (MÍNIMO 2)
-# =========================================================
-@bot.message_handler(commands=['go'])
-async def command_go(message):
-    # 🚫 RESTRICCIÓN: Solo permitir en grupos
-    if message.chat.type not in ['group', 'supergroup']:
-        return
-
-    chat_group_id = message.chat.id
-
-    # 🔧 CORRECCIÓN: Forzamos la cola pasando el chat_group_id de este grupo específico
-    result = await force_start_queue(chat_group_id)
-
-    if result["status"] == "not_enough_players":
-        await bot.reply_to(
-            message, 
-            f"⚠️ No hay suficientes jugadores en este grupo para forzar el inicio.\n"
-            f"Se necesita un mínimo de <b>2 personas</b> (actualmente hay {result['current_count']})."
-        )
-        return
-
-    if result["status"] == "room_created":
-        room = result["room"]
-        bot_info = await bot.get_me()
-        
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton(text="📥 Ir a mis DMs", url=f"t.me/{bot_info.username}"))
-
-        await bot.send_message(
-            chat_group_id,
-            f"⚡ <b>¡Partida iniciada con /go!</b>\nCreando sala con los jugadores en espera de este grupo.\n\n"
-            f"👉 Corran a sus DMs para empezar a memorizar.",
-            reply_markup=markup
-        )
-        
-        # Ejecutamos la sesión de juego en segundo plano de inmediato
         asyncio.create_task(
             start_game_session(bot, room["room_id"], chat_group_id)
         )
@@ -127,18 +50,13 @@ async def command_go(message):
 async def callback_game_router(call):
     await handle_animal_callback(bot, call)
 
-# =========================================================
-# FUNCIÓN EXTRACTORA DE FILE_ID
-# =========================================================
 @bot.message_handler(content_types=['photo'])
 async def capturar_id_imagen(message):
-    """Detecta imágenes enviadas al bot y extrae su ID único de Telegram."""
     file_id = message.photo[-1].file_id
-    
     mensaje_respuesta = (
         "🖼️ <b>¡Imagen recibida!</b>\n\n"
-        "Aquí tienes el ID de Telegram para usar en tu código:\n"
-        "<code>{file_id}</code>"
+        "Aquí tienes el ID de Telegram para usar in-code:\n"
+        f"<code>{file_id}</code>"
     )
     await bot.reply_to(message, mensaje_respuesta, parse_mode="HTML")
 
@@ -154,7 +72,7 @@ async def main():
     gm.scheduler.start()
     logger.info("Planificador APScheduler iniciado con éxito.")
     
-    # 🌍 TRUCO CRÍTICO PARA RENDER GRATIS: Servidor web falso en segundo plano
+    # 🌍 TRUCO PARA RENDER GRATIS: Servidor HTTP simulado en segundo plano
     import os
     from http.server import BaseHTTPRequestHandler, HTTPServer
     import threading
@@ -164,16 +82,14 @@ async def main():
             self.send_response(200)
             self.send_header("Content-type", "text/html")
             self.end_headers()
-            self.wfile.write(b"Bot activo y operando de forma gratuita!")
-            
-        def log_message(self, format, *args):
-            return  # Silenciar logs internos del servidor HTTP para mantener la consola limpia
+            self.wfile.write(b"Servidor de Bot en ejecucion activa")
+        def log_message(self, format, *args): return
 
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(('0.0.0.0', port), FakeWebhookServer)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    logger.info(f"🌍 Servidor web falso escuchando en el puerto {port} para satisfacer el escaneo de Render.")
-    
+    logger.info(f"🌍 Puerto falso activo en el {port} para Render Free.")
+
     logger.info("Iniciando bucle de escucha asíncrono del bot...")
     await bot.infinity_polling(skip_pending=True)
 
