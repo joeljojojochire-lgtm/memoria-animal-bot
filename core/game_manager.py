@@ -53,8 +53,15 @@ async def send_visual_sequence_dm(bot, user_id: int, room_id: str, level: int, s
         # Timeout dinámico basado en la cantidad de imágenes
         duration = get_level_duration(level) + num_items
         
+        # 🔧 CORRECCIÓN CRÍTICA: Cambiado 'date' por 'interval' para aceptar los segundos sin reventar
         job_id = f"timeout_{room_id}_{user_id}_{level}"
-        scheduler.add_job(process_timeout_elimination, 'date', run_date=None, args=[bot, user_id, room_id, 0, job_id], id=job_id, seconds=duration)
+        scheduler.add_job(
+            process_timeout_elimination, 
+            'interval', 
+            seconds=duration, 
+            args=[bot, user_id, room_id, 0, job_id], 
+            id=job_id
+        )
         
     except Exception as e:
         logger.error(f"Error DM {user_id}: {e}")
