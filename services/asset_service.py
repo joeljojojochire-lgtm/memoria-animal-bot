@@ -1,0 +1,65 @@
+# Mapeo unificado con IDs reales de Telegram extraídos en producción
+ASSETS = {
+    "POLLO": [
+        "AgACAgQAAxkBAAM5agXvtR3DxNAfOWorOnKGzxXXL_wAAogOaxtlBDBQWGKeYwkL_MwBAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAPkagY_MUDzanHb2Zh3ftKes_rcDmgAAooOaxtlBDBQOnbD3GiEF64BAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAPmagY_OtRzsdTKOAOwyeXd8I831OUAAm0OaxvGZzFQLTKFMWRa9hIBAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAPoagY_PxO3i4MD6DVDSbbCbIkbuFMAAowOaxtlBDBQj-854d3C2tYBAAMCAAN5AAM7BA"
+    ],
+    "PERRO": [
+        "AgACAgQAAxkBAAPqagY_RNVFCCgrr2igRSoao1LTLmkAAo0OaxtlBDBQu-NLvCgNfYYBAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAPsagY_SFrMi4_9Yh9gQfd0F2znjtoAAm4OaxvGZzFQSDLuDcyh13IBAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAPuagY_TAtK4rICVph18sNvaEBzFhcAAo8OaxtlBDBQ5maQ0w64zugBAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAPwagY_UHahzg8PYQx_h03npJOXhucAAm8OaxvGZzFQkrPL7lhxSQwBAAMCAAN5AAM7BA"
+    ],
+    "GATO": [
+        "AgACAgQAAxkBAAPyagY_VG2BESGoEkBz-t-gYPGaP84AApEOaxtlBDBQeRsO_THym3cBAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAP0agY_WVSH1AsgneMi7RbbVAfP5l4AAnAOaxvGZzFQmYHMuH6kyFABAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAP2agY_YHus0n1ganziCgaluq4Gih4AApMOaxtlBDBQQ-l4OU4rqk4BAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAP4agY_ZAfLB752C1abfytkD4BEECcAAnEOaxvGZzFQYfPEfpq2QIABAAMCAAN5AAM7BA"
+    ],
+    "VACA": [
+        "AgACAgQAAxkBAAP6agY_agky9GOC43IuP-fS4jfPsNEAApUOaxtlBDBQAtW7D2CeH4UBAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAP8agY_b3rrZfGEnEUJ0Jb00pWhH0wAAnIOaxvGZzFQeuQ8U2OIAwIBAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAP-agY_dLXmzm1azqsEF0i4Wa3QrCkAApcOaxtlBDBQgRWsTw9UZBwBAAMCAAN5AAM7BA",
+        "AgACAgQAAxkBAAIBAAFqBj95LH45wgYBteYhlEUWyL-f8AACcw5rG8ZnMVAePqNvkfQYfgEAAwIAA3kAAzsE"
+    ],
+    "CERDO": [
+        "AgACAgQAAxkBAAIBAmoGP32c_daqWXbFTvbuVPWWfa1uAAKZDmsbZQQwUPP2PFr9w7pyAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBBGoGP4TQFGAmOS240MVAeIErgG1OAAJ0DmsbxmcxUCMDKltkUPgTAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBBmoGP4t4RahrfgufkL_H9qhfJezbAAKbDmsbZQQwUP-mI6qp8CPbAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBCGoGP49L7M48D-kCteFYVOOxvKpcAAJ1DmsbxmcxUGA4dcD5ygURAQADAgADeQADOwQ"
+    ],
+    "LEON": [
+        "AgACAgQAAxkBAAIBCmoGP5WhqZA4B5K3oj0IUUuTC6IsAAKdDmsbZQQwUN2FfIlYcS6EAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBDGoGP5pNS47PM5hlIdP0YUHHEYJDAAJ2DmsbxmcxUGfXi4EdvuhtAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBDmoGP55VWlimCgExIBbuqIfNkBEbAAKfDmsbZQQwUAPkLkpW3HuwAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBEGoGP6UlrNCkU-GHwgGuiXw1ewABHAACdw5rG8ZnMVBfR1BUerws2AEAAwIAA3kAAzsE"
+    ],
+    "MONO": [
+        "AgACAgQAAxkBAAIBEmoGP6rzpQziyWmynPFGIyiCQQunAAKhDmsbZQQwUKz6rOJ4uEifAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBFGoGP675C4TVloYjbamV2VBZV3OWAAKiDmsbZQQwUHdWHFOSbh6vAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBFmoGP7OMKI_aX3w90EszFq_qQCNcAAJ4DmsbxmcxUHI9mZ3IT3rlAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBGGoGP7d_HCtuCNA6VNXMkQVok74zAAKkDmsbZQQwUNy0nlzEifOZAQADAgADeQADOwQ"
+    ],
+    "SAPO": [
+        "AgACAgQAAxkBAAIBGmoGP72jA6IlCIQcY3odztoJRr4mAAJXD2sbdR0wUBux0gABzmTvbAEAAwIAA3kAAzsE",
+        "AgACAgQAAxkBAAIBHGoGP8Gxii3smyTdnBgxrsbUiDpXAAJYD2sbdR0wULO5kzJDjl7zAQADAgADeQADOwQ",
+        "AgACAgQAAxkBAAIBHmoGP8dM_TPxHE26dapwmLoQzb-kAALIDmsbZQQwUHxC5rMKNi2-AQADAgADeQADOwQ"
+    ],
+    # Dejamos estos placeholders temporales por si se llaman en el flujo general
+    "SAPO_LOBBY": "https://images.unsplash.com/photo-1551269901-5c5e14c25df7?q=80&w=400",
+    "SAPO_VICTORIA": "https://images.unsplash.com/photo-1551269901-5c5e14c25df7?q=80&w=400",
+    "SAPO_DERROTA": "https://images.unsplash.com/photo-1551269901-5c5e14c25df7?q=80&w=400"
+}
+
+EMOJIS = {
+    "POLLO": "🐔", 
+    "PERRO": "🐶", 
+    "GATO": "🐱", 
+    "VACA": "🐮",
+    "CERDO": "🐷", 
+    "LEON": "🦁", 
+    "MONO": "🐵", 
+    "SAPO": "🐸"
+}
