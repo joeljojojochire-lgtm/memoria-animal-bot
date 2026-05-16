@@ -1,142 +1,160 @@
 import asyncio
+import json
 import logging
-from telebot.async_telebot import AsyncTeleBot
+import random
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import BOT_TOKEN
-from db.database import init_db, create_user
-from core.matchmaking import add_to_queue, force_start_queue  # ← Importamos ambas funciones
-from core.game_manager import start_game_session  
-from handlers.callbacks import handle_animal_callback
+import aiosqlite
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()]
-)
+from config import DB_PATH
+from services.asset_service import ASSETS, EMOJIS
+from core.round_engine import generate_round_sequence, build_keyboard_layout, get_level_duration
+from handlers.callbacks import PLAYER_STATES, get_state_key
+
 logger = logging.getLogger(__name__)
+scheduler = None
 
-bot = AsyncTeleBot(BOT_TOKEN, parse_mode="HTML")
+async def start_game_session(bot, room_id: str, chat_group_id: int):
+    # Espera corta de cortesía para el lobby
+    await asyncio.sleep(3) 
 
-@bot.message_handler(commands=['start'])
-async def command_start(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    await create_user(user_id, username)
-    await bot.reply_to(
-        message, 
-        "🧠 <b>¡Bienvenido a Memoria Animal!</b>\n\n"
-        "👥 Este juego está diseñado para jugarse en grupos.\n"
-        "Añádeme a un grupo de Telegram y envía <b>/join</b> allí para empezar."
+    players = []
+    async with aiosqlite.connect(DB_PATH) as db:
+        # 🔧 CORRECCIÓN: Usamos 'status' en lugar de 'state' para que coincida con tu DB
+        await db.execute("UPDATE rooms SET status = 'playing' WHERE room_id = ?", (room_id,))
+        await db.commit()
+        
+        # Obtenemos los jugadores reales de la tabla secundaria que tú creaste
+        async with db.execute("SELECT user_id, username FROM room_players WHERE room_id = ?", (room_id,)) as cursor:
+            async for row in cursor:
+                players.append({"user_id": row[0], "username": row[1]})
+
+    if not players:
+        logger.error(f"❌ No se encontraron jugadores en room_players para la sala {room_id}")
+        return
+
+    menciones = ", ".join([f"@{p['username']}" for p in players])
+    alive_ids = [p["user_id"] for p in players]
+    
+    try:
+        await bot.send_photo(
+            chat_group_id,
+            photo=ASSETS["SAPO_LOBBY"],
+            caption=f"🏁 <b>SALA #{room_id} INICIADA</b>\nJugadores: {menciones}\n\n¡Corran a sus DMs! 🛡️"
+        )
+    except Exception as e:
+        logger.error(f"Error al enviar foto de lobby al grupo: {e}")
+        await bot.send_message(chat_group_id, f"🏁 <b>SALA #{room_id} INICIADA</b>\nJugadores: {menciones}\n\n¡Corran a sus DMs! 🛡️")
+
+    await execute_round(bot, room_id, 1, alive_ids, chat_group_id)
+
+async def execute_round(bot, room_id: str, level: int, alive_ids: list, chat_group_id: int):
+    num_items = 3 if level <= 3 else 3 + (level - 3)
+    sequence = generate_round_sequence(level)[:num_items]
+    
+    await bot.send_message(
+        chat_group_id, 
+        f"📢 <b>RONDA {level}</b> ⏱️\nSecuencia de <b>{num_items} imágenes</b>. ¡Atentos!"
     )
 
-@bot.message_handler(commands=['join'])
-async def command_join(message):
-    # 🚫 Restricción: Impedir el juego en la cola global de DMs privados si buscas separar por grupos
-    if message.chat.type not in ['group', 'supergroup']:
-        await bot.reply_to(message, "❌ Este comando solo funciona dentro de grupos de Telegram.")
-        return
+    tasks = [send_visual_sequence_dm(bot, uid, room_id, level, sequence, chat_group_id) for uid in alive_ids]
+    await asyncio.gather(*tasks)
 
-    user_id = message.from_user.id
-    username = message.from_user.username or message.from_user.first_name
-    chat_group_id = message.chat.id  
+async def send_visual_sequence_dm(bot, user_id: int, room_id: str, level: int, sequence: list, chat_group_id: int):
+    try:
+        init_msg = await bot.send_message(user_id, f"🚀 <b>NIVEL {level}</b>\nPrepárate para memorizar...")
+        for i in range(5, 0, -1):
+            await asyncio.sleep(1.8)
+            try: await bot.edit_message_text(f"🚀 Apareciendo en: <b>{i}</b>...", chat_id=user_id, message_id=init_msg.message_id)
+            except: pass
+        await asyncio.sleep(1)
+        await bot.delete_message(user_id, init_msg.message_id)
 
-    await create_user(user_id, username)
+        # 🖼️ Envío de imágenes con respaldo de emoji en el texto
+        for idx, animal in enumerate(sequence):
+            emoji_respaldo = EMOJIS.get(animal, "❓")
+            photo_msg = await bot.send_photo(
+                user_id, 
+                photo=random.choice(ASSETS[animal]), 
+                caption=f"🖼️ Imagen {idx+1}/{len(sequence)}\nPista visual: {emoji_respaldo}"
+            )
+            exposure = 5.0 if idx == 0 else 3.5
+            await asyncio.sleep(exposure)
+            await bot.delete_message(user_id, photo_msg.message_id)
+            await asyncio.sleep(0.5)
+
+        layout = build_keyboard_layout(level)
+        state_key = get_state_key(room_id, user_id)
+        PLAYER_STATES[state_key] = {"clicks": 0, "history": [], "sequence": sequence, "layout": layout, "level": level, "chat_group_id": chat_group_id}
+
+        markup = InlineKeyboardMarkup(row_width=4)
+        markup.add(*[InlineKeyboardButton(text=EMOJIS.get(n, n), callback_data=f"game_{room_id}_{n}_{level}_0") for n in layout])
+        
+        await bot.send_message(user_id, f"🧠 <b>NIVEL {level}</b>\n¿Cuál era el patrón?", reply_markup=markup)
+
+        duration = get_level_duration(level) + len(sequence)
+        job_id = f"timeout_{room_id}_{user_id}_{level}"
+        scheduler.add_job(process_timeout_elimination, 'date', run_date=None, args=[bot, user_id, room_id, job_id], id=job_id, seconds=duration)
+        
+    except Exception as e:
+        logger.error(f"Error enviando secuencia al DM del usuario {user_id}: {e}")
+
+async def process_timeout_elimination(bot, user_id: int, room_id: str, job_id: str):
+    state_key = get_state_key(room_id, user_id)
+    if state_key not in PLAYER_STATES: return
+    state = PLAYER_STATES[state_key]
+    chat_group_id, level = state["chat_group_id"], state["level"]
+    del PLAYER_STATES[state_key]
     
-    # Pasamos el chat_group_id para que no se mezclen los grupos
-    result = await add_to_queue(user_id, username, chat_group_id)
+    try: await bot.send_photo(user_id, photo=ASSETS["SAPO_DERROTA"], caption="⏱️ <b>¡TIEMPO AGOTADO!</b>")
+    except: pass
     
-    if result["status"] == "already_in_queue":
-        await bot.reply_to(message, f"⚠️ Ya estás en la lista de espera de este grupo, @{username}.")
-        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE room_players SET status = 'dead' WHERE room_id = ? AND user_id = ?", (room_id, user_id))
+        await db.commit()
+        
+        async with db.execute("SELECT username FROM room_players WHERE room_id = ? AND user_id = ?", (room_id, user_id)) as cursor:
+            row = await cursor.fetchone()
+            user_nick = row[0] if row else "Jugador"
+            await bot.send_message(chat_group_id, f"💀 @{user_nick} eliminado por tiempo.")
 
-    bot_info = await bot.get_me()
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton(text="📥 Ir a mis DMs", url=f"t.me/{bot_info.username}"))
+    await check_room_transitions(bot, room_id, chat_group_id, level)
 
-    if result["status"] == "queued":
-        await bot.send_message(
-            chat_group_id,
-            f"✅ @{username} se ha unido a la partida.\n"
-            f"⏳ Buscando rivales... [<b>{result['current_count']}/5</b>]\n\n"
-            f"<i>💡 Si no quieren esperar, envíen <b>/go</b> para iniciar (Mínimo 2 jugadores).</i>",
-            reply_markup=markup
-        )
-    elif result["status"] == "room_created":
-        room = result["room"]
-        await bot.send_message(
-            chat_group_id,
-            f"🔥 <b>¡SALA COMPLETADA! (5/5)</b>\nIniciando juego automáticamente...\n\n👉 ¡Revisen sus DMs!",
-            reply_markup=markup
-        )
-        asyncio.create_task(start_game_session(bot, room["room_id"], chat_group_id))
-
-# =========================================================
-# COMANDO /GO: INICIAR CON LOS QUE ESTÉN (MÍNIMO 2)
-# =========================================================
-@bot.message_handler(commands=['go'])
-async def command_go(message):
-    if message.chat.type not in ['group', 'supergroup']:
-        return
-
-    chat_group_id = message.chat.id
-    result = await force_start_queue(chat_group_id)
-
-    if result["status"] == "not_enough_players":
-        await bot.reply_to(
-            message, 
-            f"⚠️ No hay suficientes jugadores en este grupo para iniciar.\n"
-            f"Se necesita un mínimo de <b>2 personas</b> (actualmente hay {result['current_count']})."
-        )
-        return
-
-    if result["status"] == "room_created":
-        room = result["room"]
-        bot_info = await bot.get_me()
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton(text="📥 Ir a mis DMs", url=f"t.me/{bot_info.username}"))
-
-        await bot.send_message(
-            chat_group_id,
-            f"⚡ <b>¡Partida forzada con /go!</b>\nCreando sala con los {room['players_count']} jugadores en espera.\n\n"
-            f"👉 ¡Vayan corriendo a sus DMs!",
-            reply_markup=markup
-        )
-        asyncio.create_task(start_game_session(bot, room["room_id"], chat_group_id))
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("game_"))
-async def callback_game_router(call):
-    await handle_animal_callback(bot, call)
-
-@bot.message_handler(content_types=['photo'])
-async def capturar_id_imagen(message):
-    file_id = message.photo[-1].file_id
-    await bot.reply_to(message, f"🖼️ <b>ID de Imagen:</b>\n<code>{file_id}</code>", parse_mode="HTML")
-
-async def main():
-    await init_db()
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    import core.game_manager as gm
-    gm.scheduler = AsyncIOScheduler()
-    gm.scheduler.start()
+async def check_room_transitions(bot, room_id: str, chat_group_id: int, current_level: int):
+    alive_players = []
+    all_players = []
     
-    # 🌍 Servidor HTTP simulado para Render Gratis
-    import os
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    import threading
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT user_id, username, status FROM room_players WHERE room_id = ?", (room_id,)) as cursor:
+            async for row in cursor:
+                all_players.append({"user_id": row[0], "username": row[1]})
+                if row[2] == 'alive':
+                    alive_players.append(row[0])
 
-    class FakeWebhookServer(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Bot OK")
-        def log_message(self, format, *args): return
+    if any(get_state_key(room_id, uid) in PLAYER_STATES for uid in alive_players): return
 
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), FakeWebhookServer)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    if len(alive_players) == 0:
+        await bot.send_photo(chat_group_id, photo=ASSETS["SAPO_DERROTA"], caption="☠️ <b>PARTIDA TERMINADA</b>\nNadie sobrevivió.")
+        await finalizar_db(room_id, all_players)
+    elif len(alive_players) == 1:
+        ganador_id = alive_players[0]
+        user_ganador = next((p['username'] for p in all_players if p['user_id'] == ganador_id), "Héroe")
+        await bot.send_photo(chat_group_id, photo=ASSETS["SAPO_VICTORIA"], caption=f"👑 ¡@{user_ganador} GANA LA PARTIDA!")
+        try: await bot.send_photo(ganador_id, photo=ASSETS["SAPO_VICTORIA"], caption="🏆 ¡ERES EL CAMPEÓN!")
+        except: pass
+        await finalizar_db(room_id, all_players, ganador_id)
+    else:
+        await bot.send_message(chat_group_id, f"🔄 Siguiente nivel en 5 seg...")
+        await asyncio.sleep(5)
+        # 🔧 CORRECCIÓN: Actualizamos el nivel actual en la tabla 'rooms' usando su columna real 'current_level'
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("UPDATE rooms SET current_level = ? WHERE room_id = ?", (current_level + 1, room_id))
+            await db.commit()
+        await execute_round(bot, room_id, current_level + 1, alive_players, chat_group_id)
 
-    logger.info("Bot escuchando de forma segura...")
-    await bot.infinity_polling(skip_pending=True)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+async def finalizar_db(room_id, players, ganador_id=None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE rooms SET status = 'finished' WHERE room_id = ?", (room_id,))
+        for p in players:
+            stat = "wins = wins + 1, games_played = games_played + 1" if p['user_id'] == ganador_id else "games_played = games_played + 1"
+            await db.execute(f"UPDATE users SET {stat} WHERE user_id = ?", (p['user_id'],))
+        await db.commit()

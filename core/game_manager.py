@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import random
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -13,27 +14,36 @@ logger = logging.getLogger(__name__)
 scheduler = None
 
 async def start_game_session(bot, room_id: str, chat_group_id: int):
-    await asyncio.sleep(10) # Espera de lobby
+    # Espera corta de cortesía para el lobby
+    await asyncio.sleep(3) 
 
     players = []
     async with aiosqlite.connect(DB_PATH) as db:
-        # Consultamos tus tablas relacionales reales
+        # 🔧 CORRECCIÓN: Usamos 'status' en lugar de 'state' para que coincida con tu DB
+        await db.execute("UPDATE rooms SET status = 'playing' WHERE room_id = ?", (room_id,))
+        await db.commit()
+        
+        # Obtenemos los jugadores reales de la tabla secundaria que tú creaste
         async with db.execute("SELECT user_id, username FROM room_players WHERE room_id = ?", (room_id,)) as cursor:
             async for row in cursor:
                 players.append({"user_id": row[0], "username": row[1]})
 
     if not players:
-        logger.error(f"No se encontraron jugadores para la sala {room_id}")
+        logger.error(f"❌ No se encontraron jugadores en room_players para la sala {room_id}")
         return
 
     menciones = ", ".join([f"@{p['username']}" for p in players])
     alive_ids = [p["user_id"] for p in players]
     
-    await bot.send_photo(
-        chat_group_id,
-        photo=ASSETS["SAPO_LOBBY"],
-        caption=f"🏁 <b>SALA #{room_id} INICIADA</b>\nJugadores: {menciones}\n\n¡Corran a sus DMs! 🛡️"
-    )
+    try:
+        await bot.send_photo(
+            chat_group_id,
+            photo=ASSETS["SAPO_LOBBY"],
+            caption=f"🏁 <b>SALA #{room_id} INICIADA</b>\nJugadores: {menciones}\n\n¡Corran a sus DMs! 🛡️"
+        )
+    except Exception as e:
+        logger.error(f"Error al enviar foto de lobby al grupo: {e}")
+        await bot.send_message(chat_group_id, f"🏁 <b>SALA #{room_id} INICIADA</b>\nJugadores: {menciones}\n\n¡Corran a sus DMs! 🛡️")
 
     await execute_round(bot, room_id, 1, alive_ids, chat_group_id)
 
@@ -59,7 +69,7 @@ async def send_visual_sequence_dm(bot, user_id: int, room_id: str, level: int, s
         await asyncio.sleep(1)
         await bot.delete_message(user_id, init_msg.message_id)
 
-        # 🖼️ Envío de imágenes con respaldo textual en el caption
+        # 🖼️ Envío de imágenes con respaldo de emoji en el texto
         for idx, animal in enumerate(sequence):
             emoji_respaldo = EMOJIS.get(animal, "❓")
             photo_msg = await bot.send_photo(
@@ -86,7 +96,7 @@ async def send_visual_sequence_dm(bot, user_id: int, room_id: str, level: int, s
         scheduler.add_job(process_timeout_elimination, 'date', run_date=None, args=[bot, user_id, room_id, job_id], id=job_id, seconds=duration)
         
     except Exception as e:
-        logger.error(f"Error DM {user_id}: {e}")
+        logger.error(f"Error enviando secuencia al DM del usuario {user_id}: {e}")
 
 async def process_timeout_elimination(bot, user_id: int, room_id: str, job_id: str):
     state_key = get_state_key(room_id, user_id)
@@ -99,7 +109,6 @@ async def process_timeout_elimination(bot, user_id: int, room_id: str, job_id: s
     except: pass
     
     async with aiosqlite.connect(DB_PATH) as db:
-        # Actualizamos tu columna relacional real a 'dead'
         await db.execute("UPDATE room_players SET status = 'dead' WHERE room_id = ? AND user_id = ?", (room_id, user_id))
         await db.commit()
         
@@ -115,7 +124,6 @@ async def check_room_transitions(bot, room_id: str, chat_group_id: int, current_
     all_players = []
     
     async with aiosqlite.connect(DB_PATH) as db:
-        # Consultamos el estado de vida real basado en tus tablas relacionales
         async with db.execute("SELECT user_id, username, status FROM room_players WHERE room_id = ?", (room_id,)) as cursor:
             async for row in cursor:
                 all_players.append({"user_id": row[0], "username": row[1]})
@@ -137,6 +145,10 @@ async def check_room_transitions(bot, room_id: str, chat_group_id: int, current_
     else:
         await bot.send_message(chat_group_id, f"🔄 Siguiente nivel en 5 seg...")
         await asyncio.sleep(5)
+        # 🔧 CORRECCIÓN: Actualizamos el nivel actual en la tabla 'rooms' usando su columna real 'current_level'
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("UPDATE rooms SET current_level = ? WHERE room_id = ?", (current_level + 1, room_id))
+            await db.commit()
         await execute_round(bot, room_id, current_level + 1, alive_players, chat_group_id)
 
 async def finalizar_db(room_id, players, ganador_id=None):
