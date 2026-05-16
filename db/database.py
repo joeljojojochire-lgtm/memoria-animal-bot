@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 async def init_db():
     """Inicializa la base de datos creando las tablas necesarias si no existen."""
     async with aiosqlite.connect(DB_PATH) as db:
-        # Tabla de Usuarios/Estadísticas
+        # 1. Tabla de Usuarios/Estadísticas
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -16,18 +16,42 @@ async def init_db():
                 games_played INTEGER DEFAULT 0
             )
         """)
-        # Tabla de Salas de Juego activas
+        
+        # 2. Nueva Tabla de Cola de Espera (Soporta múltiples grupos independientes)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS queue (
+                user_id INTEGER,
+                username TEXT,
+                chat_group_id INTEGER,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, chat_group_id)
+            )
+        """)
+        
+        # 3. Tabla de Salas de Juego activas
         await db.execute("""
             CREATE TABLE IF NOT EXISTS rooms (
                 room_id TEXT PRIMARY KEY,
-                state TEXT DEFAULT 'waiting',
-                players_count INTEGER,
-                players TEXT,
-                alive TEXT
+                status TEXT DEFAULT 'playing',
+                current_level INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # 4. Nueva Tabla de Jugadores por Sala (Para controlar quién sigue vivo en el juego)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS room_players (
+                room_id TEXT,
+                user_id INTEGER,
+                username TEXT,
+                status TEXT DEFAULT 'alive', -- 'alive' o 'dead' (eliminado)
+                PRIMARY KEY (room_id, user_id),
+                FOREIGN KEY (room_id) REFERENCES rooms(room_id) ON DELETE CASCADE
+            )
+        """)
+        
         await db.commit()
-    logger.info("Tables 'users' and 'rooms' checked/created successfully.")
+    logger.info("Base de datos estructurada e inicializada con éxito (Tablas: users, queue, rooms, room_players).")
 
 async def create_user(user_id: int, username: str):
     """Registra un usuario nuevo en la base de datos o actualiza su username si ya existe."""
